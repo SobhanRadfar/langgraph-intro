@@ -1,7 +1,12 @@
 from pydantic import BaseModel
 from typing import Annotated, List, Generator
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessageChunk
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    AIMessageChunk,
+)
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
@@ -10,7 +15,7 @@ from scout.tools import query_db, generate_visualization
 from scout.prompts import prompts
 
 
-class  ScoutState(BaseModel):
+class ScoutState(BaseModel):
     messages: Annotated[List[BaseMessage], add_messages] = []
     chart_json: str = ""
 
@@ -26,40 +31,39 @@ class Agent:
         system_prompt: The system prompt for the agent.
         temperature: The temperature for the agent.
     """
+
     def __init__(
-            self, 
-            name: str, 
-            tools: List = [query_db, generate_visualization],
-            model: str = "gpt-4.1-mini-2025-04-14", 
-            system_prompt: str = "You are a helpful assistant.",
-            temperature: float = 0.1
-            ):
+        self,
+        name: str,
+        tools: List = [query_db, generate_visualization],
+        model: str = "gpt-4.1-mini-2025-04-14",
+        system_prompt: str = "You are a helpful assistant.",
+        temperature: float = 0.1,
+    ):
         self.name = name
         self.tools = tools
         self.model = model
         self.system_prompt = system_prompt
         self.temperature = temperature
-        
-        self.llm = ChatOpenAI(
-            model=self.model,
-            temperature=self.temperature
-            ).bind_tools(self.tools)
-        
-        self.runnable = self.build_graph()
 
+        self.llm = ChatOpenAI(
+            model=self.model, temperature=self.temperature
+        ).bind_tools(self.tools)
+
+        self.runnable = self.build_graph()
 
     def build_graph(self):
         """
         Build the LangGraph application.
         """
+
         def scout_node(state: ScoutState) -> ScoutState:
             response = self.llm.invoke(
-                [SystemMessage(content=self.system_prompt)] +
-                state.messages
-                )
+                [SystemMessage(content=self.system_prompt)] + state.messages
+            )
             state.messages = state.messages + [response]
             return state
-        
+
         def router(state: ScoutState) -> str:
             last_message = state.messages[-1]
             if not last_message.tool_calls:
@@ -76,8 +80,7 @@ class Agent:
         builder.add_conditional_edges("chatbot", router, ["tools", END])
         builder.add_edge("tools", "chatbot")
 
-        return builder.compile(checkpointer=MemorySaver())
-    
+        return builder.compile()
 
     def inspect_graph(self):
         """
@@ -87,7 +90,6 @@ class Agent:
 
         graph = self.build_graph()
         display(Image(graph.get_graph(xray=True).draw_mermaid_png()))
-
 
     def invoke(self, message: str, **kwargs) -> str:
         """Synchronously invoke the graph.
@@ -99,14 +101,10 @@ class Agent:
             str: The LLM response.
         """
         result = self.runnable.invoke(
-            input = {
-                "messages": [HumanMessage(content=message)]
-            },
-            **kwargs
+            input={"messages": [HumanMessage(content=message)]}, **kwargs
         )
 
         return result["messages"][-1].content
-    
 
     def stream(self, message: str, **kwargs) -> Generator[str, None, None]:
         """Synchronously stream the results of the graph run.
@@ -118,15 +116,15 @@ class Agent:
             str: The final LLM response or tool call response
         """
         for message_chunk, metadata in self.runnable.stream(
-            input = {
-                "messages": [HumanMessage(content=message)]
-            },
+            input={"messages": [HumanMessage(content=message)]},
             stream_mode="messages",
-            **kwargs
+            **kwargs,
         ):
             if isinstance(message_chunk, AIMessageChunk):
                 if message_chunk.response_metadata:
-                    finish_reason = message_chunk.response_metadata.get("finish_reason", "")
+                    finish_reason = message_chunk.response_metadata.get(
+                        "finish_reason", ""
+                    )
                     if finish_reason == "tool_calls":
                         yield "\n\n"
 
@@ -136,7 +134,6 @@ class Agent:
                     tool_name = tool_chunk.get("name", "")
                     args = tool_chunk.get("args", "")
 
-                    
                     if tool_name:
                         tool_call_str = f"\n\n< TOOL CALL: {tool_name} >\n\n"
 
@@ -148,9 +145,6 @@ class Agent:
                 continue
 
 
-# Define and instantiate the agent 
-agent = Agent(
-        name="Scout",
-        system_prompt=prompts.scout_system_prompt
-        )
+# Define and instantiate the agent
+agent = Agent(name="Scout", system_prompt=prompts.scout_system_prompt)
 graph = agent.build_graph()
